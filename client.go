@@ -16,6 +16,7 @@ import (
 	"net/http/httptrace"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -94,6 +95,10 @@ type Dialer struct {
 	// guarantee that compression will be supported. Currently only "no context
 	// takeover" modes are supported.
 	EnableCompression bool
+
+	//CompressionPool return a pool of buffers for compression operations.
+	// If the value is not set, the sync.Pool will be used.
+	CompressionPool func() BufferPool
 
 	// Jar specifies the cookie jar.
 	// If Jar is nil, cookies are not sent in requests and ignored

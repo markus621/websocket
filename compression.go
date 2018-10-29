@@ -19,20 +19,32 @@ const (
 )
 
 var (
-	flateWriterPools [maxCompressionLevel - minCompressionLevel + 1]sync.Pool
-	flateReaderPool  = sync.Pool{New: func() interface{} {
-		return flate.NewReader(nil)
-	}}
+	flateWriterPools map[int]BufferPool
+	flateReaderPool  BufferPool
+	poolsLock        sync.Mutex
 )
 
-func decompressNoContextTakeover(r io.Reader) io.ReadCloser {
+func init() {
+	flateWriterPools = make(map[int]BufferPool)
+}
+
+func decompressNoContextTakeover(r io.Reader, pool func() BufferPool) io.ReadCloser {
 	const tail =
 	// Add four bytes as specified in RFC
 	"\x00\x00\xff\xff" +
 		// Add final block to squelch unexpected EOF error from flate reader.
 		"\x01\x00\x00\xff\xff"
 
+	poolsLock.Lock()
+	if flateReaderPool == nil {
+		flateReaderPool = pool()
+	}
+	poolsLock.Unlock()
+
 	fr, _ := flateReaderPool.Get().(io.ReadCloser)
+	if fr == nil {
+		fr = flate.NewReader(nil)
+	}
 	fr.(flate.Resetter).Reset(io.MultiReader(r, strings.NewReader(tail)), nil)
 	return &flateReadWrapper{fr}
 }
@@ -41,8 +53,15 @@ func isValidCompressionLevel(level int) bool {
 	return minCompressionLevel <= level && level <= maxCompressionLevel
 }
 
-func compressNoContextTakeover(w io.WriteCloser, level int) io.WriteCloser {
-	p := &flateWriterPools[level-minCompressionLevel]
+func compressNoContextTakeover(w io.WriteCloser, level int, pool func() BufferPool) io.WriteCloser {
+	poolsLock.Lock()
+	p, b := flateWriterPools[level-minCompressionLevel]
+	if !b {
+		p = pool()
+		flateWriterPools[level-minCompressionLevel] = p
+	}
+	poolsLock.Unlock()
+
 	tw := &truncWriter{w: w}
 	fw, _ := p.Get().(*flate.Writer)
 	if fw == nil {
@@ -92,7 +111,7 @@ func (w *truncWriter) Write(p []byte) (int, error) {
 type flateWriteWrapper struct {
 	fw *flate.Writer
 	tw *truncWriter
-	p  *sync.Pool
+	p  BufferPool
 }
 
 func (w *flateWriteWrapper) Write(p []byte) (int, error) {

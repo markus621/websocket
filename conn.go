@@ -257,7 +257,8 @@ type Conn struct {
 
 	enableWriteCompression bool
 	compressionLevel       int
-	newCompressionWriter   func(io.WriteCloser, int) io.WriteCloser
+	compressionPool        func() BufferPool
+	newCompressionWriter   func(io.WriteCloser, int, func() BufferPool) io.WriteCloser
 
 	// Read fields
 	reader        io.ReadCloser // the current reader returned to the application
@@ -276,10 +277,10 @@ type Conn struct {
 	messageReader *messageReader // the current low-level reader
 
 	readDecompress         bool // whether last read frame had RSV1 set
-	newDecompressionReader func(io.Reader) io.ReadCloser
+	newDecompressionReader func(io.Reader, func() BufferPool) io.ReadCloser
 }
 
-func newConn(conn net.Conn, isServer bool, readBufferSize, writeBufferSize int, writeBufferPool BufferPool, br *bufio.Reader, writeBuf []byte) *Conn {
+func newConn(conn net.Conn, isServer bool, readBufferSize, writeBufferSize int, writeBufferPool BufferPool, compressionPool func() BufferPool, br *bufio.Reader, writeBuf []byte) *Conn {
 
 	if br == nil {
 		if readBufferSize == 0 {
@@ -313,6 +314,7 @@ func newConn(conn net.Conn, isServer bool, readBufferSize, writeBufferSize int, 
 		writeBufSize:           writeBufferSize,
 		enableWriteCompression: true,
 		compressionLevel:       defaultCompressionLevel,
+		compressionPool:        compressionPool,
 	}
 	c.SetCloseHandler(nil)
 	c.SetPingHandler(nil)
@@ -502,7 +504,7 @@ func (c *Conn) NextWriter(messageType int) (io.WriteCloser, error) {
 	}
 	c.writer = &mw
 	if c.newCompressionWriter != nil && c.enableWriteCompression && isData(messageType) {
-		w := c.newCompressionWriter(c.writer, c.compressionLevel)
+		w := c.newCompressionWriter(c.writer, c.compressionLevel, c.compressionPool)
 		mw.compress = true
 		c.writer = w
 	}
@@ -954,7 +956,7 @@ func (c *Conn) NextReader() (messageType int, r io.Reader, err error) {
 			c.messageReader = &messageReader{c}
 			c.reader = c.messageReader
 			if c.readDecompress {
-				c.reader = c.newDecompressionReader(c.reader)
+				c.reader = c.newDecompressionReader(c.reader, c.compressionPool)
 			}
 			return frameType, c.reader, nil
 		}
