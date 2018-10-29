@@ -329,7 +329,14 @@ func (d *Dialer) DialContext(ctx context.Context, urlStr string, requestHeader h
 		}
 	}
 
-	conn := newConn(netConn, false, d.ReadBufferSize, d.WriteBufferSize, d.WriteBufferPool, nil, nil)
+	//Set default pool if not specified during initialization
+	if d.CompressionPool == nil {
+		d.CompressionPool = func() BufferPool {
+			return &sync.Pool{}
+		}
+	}
+
+	conn := newConn(netConn, false, d.ReadBufferSize, d.WriteBufferSize, d.WriteBufferPool, d.CompressionPool, nil, nil)
 
 	if err := req.Write(netConn); err != nil {
 		return nil, nil, err

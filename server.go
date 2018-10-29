@@ -204,7 +204,14 @@ func (u *Upgrader) Upgrade(w http.ResponseWriter, r *http.Request, responseHeade
 		writeBuf = buf
 	}
 
-	c := newConn(netConn, true, u.ReadBufferSize, u.WriteBufferSize, u.WriteBufferPool, br, writeBuf)
+	//Set default pool if not specified during initialization
+	if compress && u.CompressionPool == nil {
+		u.CompressionPool = func() BufferPool {
+			return &sync.Pool{}
+		}
+	}
+
+	c := newConn(netConn, true, u.ReadBufferSize, u.WriteBufferSize, u.WriteBufferPool, u.CompressionPool, br, writeBuf)
 	c.subprotocol = subprotocol
 
 	if compress {
